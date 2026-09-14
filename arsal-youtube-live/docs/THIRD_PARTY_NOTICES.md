@@ -1,0 +1,2 @@
+# Third-Party Notices
+Arsal YouTube Live uses Electron, React, Vite, TypeScript, Zustand and FFmpeg. Their respective licenses remain in force. The Windows build downloads an FFmpeg essentials build during CI. Before commercial redistribution, review the exact FFmpeg build licensing obligations and code-sign the installer with your own certificate.

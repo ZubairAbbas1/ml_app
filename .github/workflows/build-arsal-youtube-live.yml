@@ -1,0 +1,44 @@
+name: Build Arsal YouTube Live Windows
+on:
+  push:
+    branches: [arsal-youtube-live-build]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: arsal-youtube-live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force resources/ffmpeg | Out-Null
+          Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-unpacked
+          $f = Get-ChildItem ffmpeg-unpacked -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          $p = Get-ChildItem ffmpeg-unpacked -Recurse -Filter ffprobe.exe | Select-Object -First 1
+          Copy-Item $f.FullName resources/ffmpeg/ffmpeg.exe
+          Copy-Item $p.FullName resources/ffmpeg/ffprobe.exe
+      - name: Test
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build installers
+        run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arsal-youtube-live-windows
+          path: |
+            arsal-youtube-live/release/*.exe
+            arsal-youtube-live/docs/USER_GUIDE.md
+          if-no-files-found: error

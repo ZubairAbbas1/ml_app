@@ -1,0 +1,2 @@
+import type { AppConfig } from './types';
+export const defaultConfig:AppConfig={mode:'dual',loop:true,autoReconnect:true,encoder:'auto',audioEnabled:true,audioVolume:100,rememberKeys:false,recordLocal:false,recordDir:'',horizontal:{enabled:true,server:'rtmps://a.rtmps.youtube.com/live2',key:'',width:1920,height:1080,fps:30,bitrateKbps:10000,fit:'fit',cropX:50,cropY:50,zoom:100},vertical:{enabled:true,server:'rtmps://a.rtmps.youtube.com/live2',key:'',width:1080,height:1920,fps:30,bitrateKbps:10000,fit:'fill',cropX:50,cropY:50,zoom:100}};

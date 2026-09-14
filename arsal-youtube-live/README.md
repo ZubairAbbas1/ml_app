@@ -1,0 +1,2 @@
+# Arsal YouTube Live
+Windows desktop studio for streaming one local video to YouTube in horizontal 16:9, vertical 9:16, or both. Includes unlimited looping, independent RTMPS outputs, hardware encoder selection, secure remembered keys, local MKV backup, crop controls, pre-flight checks, live stats and auto reconnect.
