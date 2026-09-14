@@ -2,7 +2,7 @@
   "name": "arsal-youtube-live",
   "version": "1.0.0",
   "description": "Dual-format YouTube Live desktop streaming studio",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main/main.js",
   "author": "Arsal YouTube Live",
   "license": "MIT",
   "scripts": {
