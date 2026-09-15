@@ -1,6 +1,6 @@
 {
   "name": "arsal-youtube-live",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Dual-format YouTube Live desktop streaming studio",
   "main": "dist/main/main/main.js",
   "author": "Arsal YouTube Live",
