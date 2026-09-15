@@ -1,56 +1,22 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import type { AppConfig, MediaInfo, OutputConfig, StreamStats, Encoder } from '../shared/types';
-import { buildStreamArgs, ffmpegPath } from './ffmpeg';
-
-type K = 'horizontal' | 'vertical';
-
-export class StreamProcessManager extends EventEmitter {
-  private p = new Map<K, ChildProcessWithoutNullStreams>();
-  private stopSet = new Set<K>();
-  private retries = new Map<K, number>();
-  private lastMetricEmit = new Map<K, number>();
-  stats: Record<K, StreamStats> = {
-    horizontal: { state: 'offline', fps: 0, bitrateKbps: 0, speed: '0x', frames: 0, elapsed: 0, reconnects: 0 },
-    vertical: { state: 'offline', fps: 0, bitrateKbps: 0, speed: '0x', frames: 0, elapsed: 0, reconnects: 0 },
-  };
-
-  constructor(private media: MediaInfo, private cfg: AppConfig, private encoder: Encoder) { super(); }
-  start(k: K, o: OutputConfig) { if (this.p.has(k)) return; this.stopSet.delete(k); this.launch(k, o); }
-  private launch(k: K, o: OutputConfig) {
-    this.set(k, { state: 'connecting' }, true);
-    const cp = spawn(ffmpegPath(), buildStreamArgs(this.media, o, this.cfg, this.encoder), { windowsHide: true });
-    this.p.set(k, cp);
-    let streaming = false;
-    cp.stderr.setEncoding('utf8');
-    cp.stderr.on('data', (s: string) => {
-      if (!streaming && /frame=|Output #0/i.test(s)) { streaming = true; this.retries.set(k, 0); this.set(k, { state: 'streaming', lastError: undefined }, true); }
-      const fm = s.match(/frame=\s*(\d+)/), fps = s.match(/fps=\s*([\d.]+)/), br = s.match(/bitrate=\s*([\d.]+)kbits\/s/), sp = s.match(/speed=\s*([^\s]+)/), tm = s.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
-      const patch: Partial<StreamStats> = {};
-      if (fm) patch.frames = +fm[1]; if (fps) patch.fps = +fps[1]; if (br) patch.bitrateKbps = +br[1]; if (sp) patch.speed = sp[1]; if (tm) patch.elapsed = (+tm[1]) * 3600 + (+tm[2]) * 60 + (+tm[3]);
-      if (Object.keys(patch).length) this.set(k, patch, false);
-    });
-    cp.on('error', e => this.set(k, { state: 'error', lastError: e.message }, true));
-    cp.on('exit', () => {
-      this.p.delete(k);
-      if (this.stopSet.has(k)) { this.set(k, { state: 'offline' }, true); return; }
-      if (this.cfg.autoReconnect) {
-        const n = (this.retries.get(k) || 0) + 1; this.retries.set(k, n); this.set(k, { state: 'reconnecting', reconnects: n, lastError: 'Encoder exited; reconnecting' }, true);
-        const delays = [2000, 5000, 10000, 15000, 30000]; setTimeout(() => { if (!this.stopSet.has(k)) this.launch(k, o); }, delays[Math.min(n - 1, delays.length - 1)]);
-      } else this.set(k, { state: 'error', lastError: 'Encoder exited' }, true);
-    });
-  }
-  private set(k: K, patch: Partial<StreamStats>, forceEmit = false) {
-    this.stats[k] = { ...this.stats[k], ...patch };
-    const now = Date.now(), last = this.lastMetricEmit.get(k) || 0;
-    if (!forceEmit && now - last < 500) return;
-    this.lastMetricEmit.set(k, now);
-    this.emit('stats', { key: k, stats: this.stats[k] });
-  }
-  stop(k: K) {
-    this.stopSet.add(k); const cp = this.p.get(k);
-    if (!cp) { this.set(k, { state: 'offline' }, true); return; }
-    this.set(k, { state: 'stopping' }, true); cp.stdin.write('q\n'); setTimeout(() => { if (!cp.killed) cp.kill(); }, 3000);
-  }
-  stopAll() { this.stop('horizontal'); this.stop('vertical'); }
+import { buildStreamArgs, ffmpegPath, sanitizeArgs } from './ffmpeg';
+type K='horizontal'|'vertical';
+const blank=():StreamStats=>({state:'offline',fps:0,bitrateKbps:0,speed:'0x',frames:0,elapsed:0,reconnects:0,playlistIndex:0});
+const parseClock=(x:string)=>{const m=x.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);return m?(+m[1])*3600+(+m[2])*60+(+m[3]):0};
+export class StreamProcessManager extends EventEmitter{
+ private p=new Map<K,ChildProcessWithoutNullStreams>();private stopSet=new Set<K>();private lastMetricEmit=new Map<K,number>();private reconnectTimers=new Map<K,NodeJS.Timeout>();private tempDir?:string;private concatFile?:string;
+ stats:Record<K,StreamStats>={horizontal:blank(),vertical:blank()};
+ constructor(private playlist:MediaInfo[],private cfg:AppConfig,private encoder:Encoder){super();if(playlist.length>1){this.tempDir=fs.mkdtempSync(path.join(os.tmpdir(),'arsal-live-'));this.concatFile=path.join(this.tempDir,'playlist.ffconcat');const lines=['ffconcat version 1.0',...playlist.map(m=>`file '${m.path.replace(/\\/g,'/').replace(/'/g,"\\'")}'`)];fs.writeFileSync(this.concatFile,lines.join('\n'),'utf8')}}
+ start(k:K,o:OutputConfig){if(this.p.has(k))return;this.stopSet.delete(k);this.launch(k,o)}
+ private playlistIndex(elapsed:number){const total=this.playlist.reduce((s,m)=>s+Math.max(.01,m.duration),0);if(!total)return 0;let t=this.cfg.loop?elapsed%total:Math.min(elapsed,total-.001);for(let i=0;i<this.playlist.length;i++){if(t<this.playlist[i].duration)return i;t-=this.playlist[i].duration}return Math.max(0,this.playlist.length-1)}
+ private friendly(line:string){const clean=sanitizeArgs([line])[0];if(/nvenc|qsv|amf/i.test(clean)&&/error|failed|device|driver|initialize/i.test(clean))return 'Hardware encoder failed to initialize.';if(/tls|ssl/i.test(clean)&&/error|failed/i.test(clean))return 'Secure RTMPS/TLS connection failed.';if(/connection refused|failed to connect|cannot open connection/i.test(clean))return 'Could not connect to the streaming server.';if(/broken pipe|connection reset/i.test(clean))return 'Streaming connection was interrupted.';if(/timed out|timeout/i.test(clean))return 'Streaming server connection timed out.';if(/server error|i\/o error|input\/output error/i.test(clean))return 'YouTube ingest rejected or closed the connection. Check server URL and stream key.';if(/invalid data|could not find codec parameters/i.test(clean))return 'A playlist item is not compatible with the current playlist.';return undefined}
+ private launch(k:K,o:OutputConfig){const reconnects=this.stats[k].reconnects||0;const factors=this.cfg.adaptiveNetwork?[1,.85,.7,.55,.4]:[1];const factor=factors[Math.min(reconnects,factors.length-1)];const floor=o.width>=1280?3000:2000;const target=Math.max(floor,Math.round(o.bitrateKbps*factor));const quality=factor>=.99?'full':factor>=.55?'adaptive':'recovery';this.set(k,{state:'connecting',targetBitrateKbps:target,networkQuality:quality,lastError:undefined},true);const cp=spawn(ffmpegPath(),buildStreamArgs(this.playlist,this.concatFile,o,this.cfg,this.encoder,target),{windowsHide:true});this.p.set(k,cp);let stdout='';let progress:Record<string,string>={};let lastFriendly='';cp.stdout.setEncoding('utf8');cp.stdout.on('data',(chunk:string)=>{stdout+=chunk;let nl=stdout.indexOf('\n');while(nl>=0){const line=stdout.slice(0,nl).trim();stdout=stdout.slice(nl+1);const eq=line.indexOf('=');if(eq>0)progress[line.slice(0,eq)]=line.slice(eq+1);if(line.startsWith('progress=')){const frame=Number(progress.frame||0),fps=Number(progress.fps||0),br=parseFloat(progress.bitrate||'0')||0,speed=progress.speed||'0x',elapsed=parseClock(progress.out_time||'0:00:00');const patch:Partial<StreamStats>={frames:frame,fps,bitrateKbps:br,speed,elapsed,playlistIndex:this.playlistIndex(elapsed),targetBitrateKbps:target,networkQuality:quality};if(frame>0&&elapsed>0){patch.state='streaming';patch.connectedAt=this.stats[k].connectedAt||Date.now();patch.lastError=undefined}this.set(k,patch,line==='progress=end');progress={}}nl=stdout.indexOf('\n')}});cp.stderr.setEncoding('utf8');cp.stderr.on('data',(s:string)=>{for(const raw of s.split(/\r?\n/)){const f=this.friendly(raw);if(f&&f!==lastFriendly){lastFriendly=f;this.set(k,{lastError:f},true)}}});cp.on('error',e=>this.set(k,{state:'error',lastError:e.message},true));cp.on('exit',(code)=>{this.p.delete(k);if(this.stopSet.has(k)){this.set(k,{state:'offline'},true);return}const reason=lastFriendly||`Encoder exited${code===null?'':` with code ${code}`}.`;if(this.cfg.autoReconnect){const n=(this.stats[k].reconnects||0)+1;this.set(k,{state:'reconnecting',reconnects:n,lastError:reason},true);const delays=[2000,5000,10000,15000,30000];const t=setTimeout(()=>{if(!this.stopSet.has(k))this.launch(k,o)},delays[Math.min(n-1,delays.length-1)]);this.reconnectTimers.set(k,t)}else this.set(k,{state:'error',lastError:reason},true)})}
+ private set(k:K,patch:Partial<StreamStats>,force=false){this.stats[k]={...this.stats[k],...patch};const now=Date.now(),last=this.lastMetricEmit.get(k)||0;if(!force&&now-last<500)return;this.lastMetricEmit.set(k,now);this.emit('stats',{key:k,stats:this.stats[k]})}
+ stop(k:K){this.stopSet.add(k);const t=this.reconnectTimers.get(k);if(t)clearTimeout(t);const cp=this.p.get(k);if(!cp){this.set(k,{state:'offline'},true);return}this.set(k,{state:'stopping'},true);try{if(!cp.stdin.destroyed)cp.stdin.write('q\n')}catch{}setTimeout(()=>{if(!cp.killed)cp.kill()},4000)}
+ stopAll(){this.stop('horizontal');this.stop('vertical');setTimeout(()=>{if(this.tempDir)try{fs.rmSync(this.tempDir,{recursive:true,force:true})}catch{}},5000)}
 }
