@@ -1,12 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import type { AppConfig,MediaInfo,OutputConfig,Encoder,SceneType } from '../shared/types';
+import type { AppConfig,MediaInfo,OutputConfig,Encoder,SceneType,OutputKind } from '../shared/types';
 export function ffmpegPath(){return app.isPackaged?path.join(process.resourcesPath,'ffmpeg','ffmpeg.exe'):path.join(process.cwd(),'resources','ffmpeg',process.platform==='win32'?'ffmpeg.exe':'ffmpeg')}
 export function ffprobePath(){return app.isPackaged?path.join(process.resourcesPath,'ffmpeg','ffprobe.exe'):path.join(process.cwd(),'resources','ffmpeg',process.platform==='win32'?'ffprobe.exe':'ffprobe')}
 export function maskSecret(s:string){if(!s)return '';return s.length<9?'••••••••':`${s.slice(0,4)}••••••••${s.slice(-4)}`}
-export function sanitizeArgs(args:string[]){return args.map(a=>a.replace(/(rtmps?:\/\/[^\s/]+\/[^\s/]+\/)[^\s|]+/gi,'$1<redacted>'))}
-export function buildDestination(o:OutputConfig){const server=o.server.trim().replace(/\/$/,'');const key=o.key.trim().replace(/^\//,'');return `${server}/${key}`}
+export function sanitizeArgs(args:string[]){return args.map(a=>a.replace(/(rtmps?:\/\/[^\s/|]+\/[^\s/|]+\/)[^\s|\]]+/gi,'$1<redacted>'))}
+export function buildDestination(o:{server:string;key:string}){const server=o.server.trim().replace(/\/$/,'');const key=o.key.trim().replace(/^\//,'');return `${server}/${key}`}
+export function outputKind(o:OutputConfig):OutputKind{return o.width>o.height?'horizontal':'vertical'}
+export function destinationsForOutput(o:OutputConfig,cfg:AppConfig){const kind=outputKind(o),all=[{id:`primary-${kind}`,name:kind==='horizontal'?'Primary / Horizontal':'Vertical / Second',kind,enabled:true,server:o.server,key:o.key},...cfg.multiDestinations.filter(d=>d.kind===kind&&d.enabled)];const seen=new Set<string>();return all.filter(d=>{if(!d.key.trim()||!/^rtmps?:\/\//i.test(d.server.trim()))return false;const url=buildDestination(d);if(seen.has(url))return false;seen.add(url);return true}).map(d=>({...d,url:buildDestination(d)}))}
+function escapeTeeUrl(s:string){return s.replace(/\\/g,'\\\\').replace(/\|/g,'\\|').replace(/\[/g,'\\[').replace(/\]/g,'\\]')}
 export function buildFilter(o:OutputConfig):string{const W=o.width,H=o.height;if(o.fit==='stretch')return`scale=${W}:${H},setsar=1`;if(o.fit==='fit')return`scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;if(o.fit==='original')return`scale='min(iw,${W})':'min(ih,${H})':force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`;const z=Math.max(1,o.zoom/100),px=Math.max(0,Math.min(100,o.cropX))/100,py=Math.max(0,Math.min(100,o.cropY))/100;return`scale=iw*${z}:ih*${z},scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}:(iw-${W})*${px}:(ih-${H})*${py},setsar=1`}
 export function encoderArgs(enc:Encoder,b:number,fps:number,fastMode=false){const g=Math.max(24,Math.round(fps*2));if(enc==='nvenc')return['-c:v','h264_nvenc','-preset',fastMode?'p3':'p5','-rc','cbr','-b:v',`${b}k`,'-maxrate',`${b}k`,'-bufsize',`${b*2}k`,'-g',String(g),'-forced-idr','1'];if(enc==='qsv')return['-c:v','h264_qsv','-preset',fastMode?'veryfast':'medium','-b:v',`${b}k`,'-maxrate',`${b}k`,'-bufsize',`${b*2}k`,'-g',String(g)];if(enc==='amf')return['-c:v','h264_amf','-usage','ultralowlatency','-rc','cbr','-b:v',`${b}k`,'-maxrate',`${b}k`,'-bufsize',`${b*2}k`,'-g',String(g)];return['-c:v','libx264','-preset',fastMode?'superfast':'veryfast','-tune','zerolatency','-b:v',`${b}k`,'-maxrate',`${b}k`,'-bufsize',`${b*2}k`,'-g',String(g),'-keyint_min',String(g)]}
 function escText(s:string){return(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/:/g,'\\:').replace(/%/g,'\\%').replace(/\[/g,'\\[').replace(/\]/g,'\\]')}
@@ -15,7 +18,7 @@ function sceneText(cfg:AppConfig,scene:SceneType){return scene==='starting'?cfg.
 function audioFilter(cfg:AppConfig){const f=[`volume=${Math.pow(10,cfg.audioProcessing.gainDb/20)*(cfg.audioVolume/100)}`];if(cfg.audioProcessing.noiseGate)f.push('agate=threshold=0.02:ratio=3:attack=20:release=250');if(cfg.audioProcessing.compressor)f.push('acompressor=threshold=-18dB:ratio=3:attack=20:release=250');if(cfg.audioProcessing.limiter)f.push('alimiter=limit=0.95');return f.join(',')}
 export interface StreamBuildOptions{scene?:SceneType;fastMode?:boolean}
 export function buildStreamArgs(playlist:MediaInfo[],concatFile:string|undefined,o:OutputConfig,cfg:AppConfig,encoder:Encoder,opts:StreamBuildOptions={}){
- if(!playlist.length)throw new Error('Playlist is empty');const scene=opts.scene||'video',dest=buildDestination(o),a=['-hide_banner','-loglevel','warning','-progress','pipe:1','-stats_period','1'];let audioIndex=0,overlayIndex=-1;
+ if(!playlist.length)throw new Error('Playlist is empty');const scene=opts.scene||'video',dests=destinationsForOutput(o,cfg);if(!dests.length)throw new Error(`No enabled ${outputKind(o)} streaming destination has a valid key.`);const a=['-hide_banner','-loglevel','warning','-progress','pipe:1','-stats_period','1'];let audioIndex=0,overlayIndex=-1;
  if(scene==='video'){
   a.push('-re');if(cfg.loop)a.push('-stream_loop','-1');if(playlist.length>1&&concatFile)a.push('-f','concat','-safe','0','-i',concatFile);else a.push('-i',playlist[0].path);
   const sourceAudio=cfg.audioEnabled&&playlist.every(m=>m.hasAudio);if(sourceAudio)audioIndex=0;else{audioIndex=1;a.push('-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100')}
@@ -31,8 +34,9 @@ export function buildStreamArgs(playlist:MediaInfo[],concatFile:string|undefined
  if(cfg.recordLocal&&cfg.recordDir)parts.push('[comp]split=2[vnet][vrec]');else parts.push('[comp]null[vnet]');a.push('-filter_complex',parts.join(';'));
  const audioMap=scene==='video'&&cfg.audioEnabled&&playlist.every(m=>m.hasAudio)?'0:a:0?':`${audioIndex}:a:0`;
  const addEncode=(videoLabel:string)=>{a.push('-map',videoLabel,'-map',audioMap,'-r',String(o.fps),'-fps_mode','cfr','-pix_fmt','yuv420p','-colorspace','bt709','-color_primaries','bt709','-color_trc','bt709',...encoderArgs(encoder,o.bitrateKbps,o.fps,!!opts.fastMode),'-c:a','aac','-b:a','128k','-ar','44100','-ac','2','-af',audioFilter(cfg),'-max_muxing_queue_size','4096')};
- addEncode('[vnet]');a.push('-rw_timeout','15000000','-flvflags','no_duration_filesize','-f','flv',dest);
- if(cfg.recordLocal&&cfg.recordDir){addEncode('[vrec]');const baseName=o.width>o.height?'horizontal':'vertical',pattern=path.join(cfg.recordDir,`${baseName}-%Y-%m-%d_%H-%M-%S.mkv`);a.push('-f','segment','-segment_time',String(Math.max(5,cfg.recordSegmentMinutes)*60),'-reset_timestamps','1','-strftime','1',pattern)}
+ addEncode('[vnet]');
+ if(dests.length===1)a.push('-rw_timeout','15000000','-flvflags','no_duration_filesize','-f','flv',dests[0].url);else{const tee=dests.map(d=>`[f=flv:onfail=ignore]${escapeTeeUrl(d.url)}`).join('|');a.push('-f','tee','-use_fifo','1','-fifo_options','attempt_recovery=1:recover_any_error=1:drop_pkts_on_overflow=1',tee)}
+ if(cfg.recordLocal&&cfg.recordDir){addEncode('[vrec]');const baseName=outputKind(o),pattern=path.join(cfg.recordDir,`${baseName}-%Y-%m-%d_%H-%M-%S.mkv`);a.push('-f','segment','-segment_time',String(Math.max(5,cfg.recordSegmentMinutes)*60),'-reset_timestamps','1','-strftime','1',pattern)}
  return a
 }
 export function ffmpegExists(){return fs.existsSync(ffmpegPath())&&fs.existsSync(ffprobePath())}
