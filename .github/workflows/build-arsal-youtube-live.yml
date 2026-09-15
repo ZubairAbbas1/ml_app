@@ -35,10 +35,29 @@ jobs:
         run: npm run typecheck
       - name: Build installers
         run: npm run dist:win
+      - name: Stage smaller download artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force artifact-setup | Out-Null
+          New-Item -ItemType Directory -Force artifact-portable | Out-Null
+          $setup = Get-ChildItem release -Filter '*.exe' | Where-Object { $_.Name -like '*Setup*' } | Select-Object -First 1
+          $portable = Get-ChildItem release -Filter '*.exe' | Where-Object { $_.Name -notlike '*Setup*' } | Select-Object -First 1
+          if (-not $setup) { throw 'Setup EXE not found' }
+          if (-not $portable) { throw 'Portable EXE not found' }
+          Copy-Item $setup.FullName 'artifact-setup/Arsal-YouTube-Live-Ultra-Pro-Max-Setup.exe'
+          Copy-Item $portable.FullName 'artifact-portable/Arsal-YouTube-Live-Ultra-Pro-Max-Portable.exe'
+          Copy-Item docs/USER_GUIDE.md artifact-setup/USER_GUIDE.md
+          Copy-Item docs/USER_GUIDE.md artifact-portable/USER_GUIDE.md
       - uses: actions/upload-artifact@v4
         with:
-          name: arsal-youtube-live-windows
-          path: |
-            arsal-youtube-live/release/*.exe
-            arsal-youtube-live/docs/USER_GUIDE.md
+          name: arsal-youtube-live-setup
+          path: arsal-youtube-live/artifact-setup/*
           if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arsal-youtube-live-portable
+          path: arsal-youtube-live/artifact-portable/*
+          if-no-files-found: error
+          compression-level: 0
