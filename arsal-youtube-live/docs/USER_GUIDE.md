@@ -1,58 +1,102 @@
-# Arsal YouTube Live Ultra Pro Max Multi-Channel — User Guide
+# Arsal YouTube Live Studio Edition v3.0 — User Guide
 
 ## Fast start
-1. Open YouTube Studio and create/open an encoder live stream for each YouTube channel you want to use.
-2. Copy each channel's RTMPS server URL and stream key.
-3. Open Arsal YouTube Live and use **Add Playlist**. Select one or many videos.
-4. Paste the primary horizontal / vertical key(s). For more channels use **Additional Lives** and add a 16:9 or 9:16 destination per channel.
-5. Enter your recent upload speed if known, then click **Auto Optimize**.
+1. Open YouTube Studio and create/open an encoder live stream for every YouTube channel you want to use.
+2. Copy each RTMPS server URL and stream key.
+3. In **Studio**, click **Add videos** and select one or many files.
+4. In **Mission Control**, paste the primary key(s) and add any extra channels.
+5. Enter a recent upload-speed result and click **Auto Optimize**.
 6. Run **Pre-flight**, then press **START LIVE**.
-7. Keep YouTube Studio > Stream health open for each channel. The app shows LIVE only after FFmpeg reports real outgoing media progress.
+7. Keep YouTube Studio > Stream health open. Arsal Live marks individual channel relays STREAMING only after FFmpeg reports real outgoing media progress.
 
-## Multi-channel / multiple lives
-- Add as many extra destinations as your connection can sustain.
-- Every destination has its own channel name, format, server URL, stream key, and enabled toggle.
-- Horizontal destinations share one horizontal encode. Vertical destinations share one vertical encode. This saves CPU/GPU compared with encoding every channel separately.
-- Upload bandwidth still multiplies per destination. Example: a 4 Mbps vertical stream sent to three channels uses roughly 12 Mbps plus audio/protocol overhead.
-- Auto Optimize includes destination count when choosing a safe quality profile.
-- If one tee destination fails, FFmpeg is configured to keep other destinations running when possible.
-- Stream keys are credentials. Enable **Remember keys securely** only if you want them stored using Windows encrypted storage.
+## Mission Control and isolated channel relays
+Studio Edition v3 changes the multi-channel architecture. Each horizontal or vertical format is encoded once, then distributed to lightweight per-channel relay processes on localhost. Each relay independently connects to its RTMP/RTMPS destination.
 
-## Simple vs Pro
-- **Simple** keeps playlist, previews, primary destinations, multi-channel lives, Auto Optimize, Safe Mode, and Start/Stop visible.
-- **Pro** adds Health & Analytics, audio processing, overlays, recording, scheduler, latency planning, diagnostics, and activity timeline.
+Benefits:
+- one failed channel can reconnect without stopping healthy channels;
+- **Retry failed only** restarts only unhealthy destination relays;
+- **Stop only this** can stop one channel while the remaining channels continue;
+- each channel has its own connection state, reconnect count, bitrate/FPS telemetry, ingest host and last error;
+- scene and adaptive-quality encoder restarts do not intentionally tear down all destination relays.
 
-## Smart stability
-- **Adaptive Network** monitors encoder speed and reconnects. If output stays below real-time, it automatically steps down through 1080p, 720p, recovery, and emergency profiles.
+Encoding is shared, but upload bandwidth still multiplies per destination. A 4 Mbps output sent to three channels requires roughly 12 Mbps plus audio/protocol overhead.
+
+## Program / Preview Studio Mode
+Studio includes separate Preview and Program scene controls. Select **Video**, **Starting Soon**, **BRB**, or **End Screen** in Preview, then press **TAKE → PROGRAM**. The shared encoder changes the program source while destination relays remain isolated.
+
+Safe operator hotkeys when enabled:
+- `Ctrl+Alt+B` → BRB
+- `Ctrl+Alt+V` → Video
+- `Ctrl+Alt+F` → Fix My Stream
+
+There is deliberately no one-key Start Live hotkey.
+
+## Playlist and media QC
+- Add multiple videos at once.
+- Drag rows to reorder.
+- Loop the full playlist or shuffle the session order.
+- **Scan media health** analyzes the first 30 seconds for long black-frame sections, long silence and basic compatibility warnings.
+
+Matching codecs/FPS/resolutions generally provide smoother playlist transitions.
+
+## Smart stability engine
+- **Adaptive Network** monitors shared-encoder real-time speed.
+- If speed remains below real time, the encoder steps down through Full HD → 720p → 540p → emergency profile.
 - **Auto quality recovery** can test one level higher after a stable period.
-- **Safe Mode** prepares a conservative 720p30 / 4 Mbps profile and reduces preview load.
-- **Fix My Stream** can be pressed during a live session to force the next safer runtime profile.
-- For maximum viewer buffering resilience, use **Normal latency** in YouTube Live Control Room.
-- No software can guarantee smooth video when available upload is below the total bitrate required by all channels. Reduce resolution/bitrate or the number of simultaneous destinations when needed.
+- **Safe Mode** favors stability and low preview load.
+- **Fix My Stream** immediately requests a safer runtime quality profile.
+- **Auto Optimize** includes the number of active destinations in its upload calculation.
 
-## Playlist
-Add multiple files, drag rows to reorder, and enable **Loop full playlist**. The live encoder plays top-to-bottom and returns to the first file. Shuffle can randomize the session order.
+No application can guarantee smooth streaming when the actual upload capacity is below the total outgoing bitrate. Reduce quality or destination count when necessary.
 
-## Live scenes
-While streaming you can request **Video**, **Starting Soon**, **BRB**, or **End Screen**. In this version a scene switch performs a short controlled encoder reconnect.
+## Audio Mixer
+Studio Edition provides:
+- source volume and gain;
+- limiter;
+- compressor;
+- noise gate;
+- optional looping background-music file;
+- background-music volume;
+- voice ducking, which lowers the music bed while source audio is present.
 
-## Audio
-Pro mode includes volume/gain, limiter, compressor, and noise-gate controls. Limiter is enabled by default.
+## Branding
+Add text and PNG/JPG/WEBP logo overlays. Disable heavy overlays and local recording if an older laptop cannot sustain encoder speed at or above 1.0x.
 
-## Overlays
-Enable a text overlay or choose a PNG/JPG/WEBP logo/watermark. Configure position and keep overlays disabled if maximum performance is required on a weak laptop.
+## Local recording
+Enable segmented MKV recording for crash-resistant backups. Choose the segment duration and optionally remux MKV recordings to MP4 after Stop.
 
-## Recording
-Enable segmented MKV local backup for crash resistance. Choose a recording folder and segment length. Optional remux converts MKV files to MP4 after streaming or on demand. Local recording adds extra encoding load, so disable it if encoder speed falls below 1.0x.
+## Automation
+The scheduler can start/stop a session on selected weekdays while the app is open. Automatic starts still require valid media and destination configuration. Opening the app by itself never starts a broadcast.
 
-## Scheduler
-The scheduler works while the app is open. Set start/stop time and active weekdays. Automatic start only works when playlist and destination keys are valid.
+## Remote Operator Console
+In **Automation**, enable Remote Control. By default it listens only on the same computer. Enabling LAN mode exposes the authenticated operator page to devices on the same network.
 
-## Profiles
-Use **Save Profile** to store non-secret configuration presets. Stream keys are intentionally excluded from profiles. Secure remembered keys remain separate.
+The remote URL contains a secret token. Keep it private. The remote page supports:
+- Video / Starting / BRB / End Screen;
+- Fix Streams;
+- Retry Failed;
+- Stop All;
+- live status refresh.
+
+Remote control intentionally cannot silently start a new broadcast.
+
+## Watchdog and crash recovery
+Encoder failures are monitored and retried according to the configured reconnect policy. Channel relay failures are retried independently. If the renderer/UI crashes while the main Electron process remains alive, the UI is reloaded while the streaming engine remains owned by the main process.
+
+If the previous session ended abnormally, the next launch displays a warning. Broadcasting is never automatically resumed after a crash.
+
+## Profiles and security
+Profile export/import excludes stream keys and the remote token. When **Remember keys securely** is enabled, stream keys are stored using Electron/Windows encrypted storage. Logs and diagnostic exports should never contain complete stream keys.
 
 ## Diagnostics
-Use **Analyze Network** to test reachability/latency to the configured ingest server. It does not pretend to measure upload bandwidth; enter a recent upload result for Auto Optimize. Use **Export diagnostics** to save a secret-redacted report.
+Diagnostics includes:
+- application/system information;
+- encoder output speed/FPS/bitrate;
+- per-channel state;
+- ingest reachability test;
+- media QC scan results;
+- activity/audit trail;
+- secret-redacted support export.
 
-## Recommended YouTube basics
-Use RTMPS, H.264, AAC stereo, CBR, and a 2-second keyframe interval. For H.264 YouTube recommends roughly 10 Mbps for 1080p30 and 4 Mbps for 720p30, but choose a quality that your encoder and total multi-channel upload can sustain reliably.
+## Current external-service boundaries
+Manual RTMPS/RTMP streaming is fully usable without a Google API project. YouTube OAuth account control, cloud guest calling, true multi-ISP bonded transport and signed automatic updates require external credentials/services/infrastructure and are not silently simulated by this desktop build.
