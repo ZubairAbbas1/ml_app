@@ -1,7 +1,7 @@
 {
   "name": "arsal-youtube-live",
-  "version": "2.1.0",
-  "description": "Arsal YouTube Live Ultra Pro Max multi-channel dual-format streaming studio",
+  "version": "3.0.0",
+  "description": "Arsal YouTube Live Studio Edition multi-channel broadcast automation studio",
   "main": "dist/main/main/main.js",
   "author": "Arsal YouTube Live",
   "license": "MIT",
